@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>一枚 token 进卡之后 · LLM 推理中的 GPU 概念图解</title>
+<style>
+  :root{
+    --bg:#0f1420; --panel:#171e2e; --ink:#e6ebf5; --muted:#8b97ad;
+    --line:#2a3450; --accent:#5aa9ff; --warm:#ffb454; --green:#5ad19b;
+    --pink:#ff7eb6; --sram:#3b6cff; --dram:#c8622a;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:radial-gradient(1200px 600px at 70% -10%,#1b2540,#0f1420);
+    color:var(--ink);font:16px/1.7 -apple-system,"Segoe UI",Roboto,"Microsoft YaHei",sans-serif;}
+  .wrap{max-width:960px;margin:0 auto;padding:48px 22px 80px;}
+  h1{font-size:30px;line-height:1.3;margin:0 0 6px;letter-spacing:.3px}
+  .sub{color:var(--muted);font-size:15px;margin-bottom:4px}
+  .meta{color:var(--muted);font-size:13px;border-bottom:1px solid var(--line);padding-bottom:18px;margin-bottom:34px}
+  h2{font-size:21px;margin:46px 0 16px;padding-left:12px;border-left:4px solid var(--accent)}
+  p{margin:12px 0}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:22px;margin:20px 0}
+  b,strong{color:#fff}
+  .tag{display:inline-block;font-size:12px;padding:2px 9px;border-radius:20px;border:1px solid var(--line);color:var(--muted);margin-left:6px;vertical-align:middle}
+  .flow{font-family:Consolas,monospace;font-size:13px;color:var(--ink);background:#0d1320;border-radius:8px;padding:14px;margin-top:10px;line-height:1.9;overflow-x:auto}
+
+  /* kernel chain */
+  .chain{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:12px 0}
+  .kn{background:#13233c;border:1px solid #2f4a7a;color:#bcd7ff;border-radius:8px;padding:6px 11px;font-size:13px;font-weight:600;white-space:nowrap}
+  .kn.loop{border-color:#7a5a2f;color:#ffd9a1}
+  .kn.out{border-color:#3f7a4f;color:#b4ecc9}
+  .ar{color:var(--muted);font-size:14px}
+
+  /* duo */
+  .duo{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .card{background:#131a29;border:1px solid var(--line);border-radius:12px;padding:16px}
+  .card h3{margin:0 0 8px;font-size:16px}
+  .duo .card.pre h3{color:var(--green)}
+  .duo .card.dec h3{color:var(--warm)}
+  .card .q{color:var(--muted);font-size:13px;margin:0 0 10px}
+  .card ul{margin:0;padding-left:18px;font-size:14px}
+  .card li{margin:5px 0}
+  .pill{display:inline-block;font-size:12px;font-weight:700;border-radius:6px;padding:1px 8px;margin-left:4px;color:#0c1220}
+  .pill.g{background:var(--green)} .pill.w{background:var(--warm)}
+
+  /* bars */
+  .bar{display:flex;align-items:center;gap:10px;margin:9px 0}
+  .bar .lab{width:150px;flex:none;font-size:12.5px;color:var(--muted)}
+  .bar .track{flex:1;min-width:40px;background:#0d1320;border-radius:6px;overflow:hidden;height:22px}
+  .bar .fill{height:100%;border-radius:6px}
+  .bar .val{width:210px;flex:none;font-size:12.5px;font-weight:600;color:var(--ink);text-align:right;line-height:1.35}
+  .f-bw{background:linear-gradient(90deg,#ffcf9a,#e8873f)}
+  .f-cp{background:linear-gradient(90deg,#8fe8b8,#3fae7d)}
+
+  /* cpu<->gpu loop */
+  .loop{display:grid;grid-template-columns:1fr 46px 1.35fr;gap:10px;align-items:stretch;margin:10px 0}
+  .cpu,.gpu{border-radius:12px;padding:14px}
+  .cpu{background:#1a2338;border:1px solid #33436e}
+  .gpu{background:#231a2c;border:1px solid #4e3560}
+  .cpu h4,.gpu h4{margin:0 0 8px;font-size:14.5px}
+  .cpu ul,.gpu ul{margin:0;padding-left:17px;font-size:13px;color:#c6d2e8}
+  .cpu li,.gpu li{margin:5px 0}
+  .mid{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;color:var(--muted);font-size:11.5px;text-align:center}
+  .mid .arr{font-size:20px;line-height:1}
+  .hbm{background:#0d1320;border:1px dashed #8a4a24;border-radius:10px;padding:9px 12px;font-size:12.5px;color:#ffc59a;margin-top:9px}
+  .smrow{display:flex;gap:6px;margin-top:9px;flex-wrap:wrap}
+  .sm{background:#33204a;border:1px solid #5a3a78;color:#dcc2ff;border-radius:7px;padding:4px 9px;font-size:12px;font-weight:600}
+
+  .grid4{display:grid;grid-template-columns:repeat(2,1fr);gap:14px}
+  .grid4 .card h3{color:var(--accent)}
+  .grid4 .card h3 em{font-style:normal;color:var(--muted);font-size:12.5px;font-weight:500}
+
+  .takeaway{background:linear-gradient(90deg,#182034,#151d2e);border:1px solid var(--line)}
+  .takeaway li{margin:8px 0}
+  a{color:var(--accent)}
+  @media(max-width:680px){.duo,.grid4{grid-template-columns:1fr}.loop{grid-template-columns:1fr}.mid{flex-direction:row;padding:0 30px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>一枚 token 进卡之后发生了什么</h1>
+  <div class="sub">LLM 推理中的 GPU 参与方式 · 概念图解</div>
+  <div class="meta">
+    companion note: 20260818T115251--gpu-in-llm-inference__concept.md · 前置: gpu-memory-hierarchy.html(内存金字塔) · 2026-08-18
+  </div>
+
+  <h2>0 · 一句话总览</h2>
+  <div class="panel">
+    <p><b>GPU 根本不认识 Transformer。</b>它每一步只是被推理框架(vLLM 之类)喂进一小段数据和一个
+    <b>kernel</b>(一段在 SM 上跑的函数);而 LLM 推理的特殊性在于:<b>权重几十 GB 常驻 HBM,
+    每生成一个 token 都要把它们完整读一遍,却只做很少的计算。</b></p>
+    <p>于是推理天然切成两种负载:<b>prefill</b>(并行处理整段 prompt,大矩阵乘,卡<b style="color:var(--green)">算力</b>)
+    和 <b>decode</b>(每步只算一个新 token,矩阵退化为向量,卡<b style="color:var(--warm)">显存带宽</b>)。</p>
+  </div>
+
+  <h2>1 · GPU 只认识 kernel:一次前向的 kernel 串</h2>
+  <div class="panel">
+    <p>框架在 CPU 上把模型各层算子翻译成一串 CUDA kernel,依次发射(launch)到 stream 上异步执行。
+    GPU 收到的从来不是"跑一个 Transformer",而是"跑这个 GEMM""跑那个 attention"——每次一小段。</p>
+    <div class="chain">
+      <span class="kn">token ids</span><span class="ar">→</span>
+      <span class="kn">embedding 查表</span><span class="ar">→</span>
+      <span class="kn loop">× L 层: QKV投影</span><span class="ar">→</span>
+      <span class="kn loop">attention</span><span class="ar">→</span>
+      <span class="kn loop">输出投影</span><span class="ar">→</span>
+      <span class="kn loop">MLP ×2</span><span class="ar">→</span>
+      <span class="kn">lm_head(词表×维度)</span><span class="ar">→</span>
+      <span class="kn">采样</span><span class="ar">→</span>
+      <span class="kn out">新 token</span>
+    </div>
+    <p style="margin-bottom:0;color:var(--muted);font-size:14px">量级差是关键:<b>权重(几十 GB)常驻 HBM</b>;
+    激活值/logits(MB 级)只在 HBM 短暂停留。一次前向 = SM 阵列轮流把每份权重从 HBM 经 L2 读进来,
+    乘完就丢、换下一份。<b>每生成一个 token,这套搬运完整走一遍。</b></p>
+  </div>
+
+  <h2>2 · prefill vs decode:同一模型,两种负载</h2>
+  <div class="duo">
+    <div class="card pre">
+      <h3>prefill(预填充)<span class="pill g">compute-bound</span></h3>
+      <p class="q">一口气并行处理整段 prompt 的 N 个 token</p>
+      <ul>
+        <li>GEMM 形状:大矩阵 × 大矩阵,SM 吃得饱</li>
+        <li>计算量随 N 线性涨,权重只读一遍</li>
+        <li>读带宽被 N 份计算摊薄 → 瓶颈在算力</li>
+        <li>决定了 <b>TTFT</b>(首 token 延迟)</li>
+      </ul>
+    </div>
+    <div class="card dec">
+      <h3>decode(解码)<span class="pill w">memory-bound</span></h3>
+      <p class="q">每步只算 1 个新 token,自回归循环</p>
+      <ul>
+        <li>GEMM 退化为矩阵 × 向量(GEMV)</li>
+        <li>还是读全部权重,却只做 1/N 的计算</li>
+        <li>算力利用率 &lt;1%,都在等 HBM 流量</li>
+        <li>决定了 <b>TPOT</b>(每 token 延迟)</li>
+      </ul>
+    </div>
+  </div>
+
+  <h2>3 · 一步 decode 的时间账:为什么卡的是带宽</h2>
+  <div class="panel">
+    <p>尺子是<b>算术强度</b>:每读写 1 byte 数据要做多少 FLOP;瓶颈 = max(搬运时间, 计算时间)。
+    以 <b>7B 模型 FP16 × A100</b> 为例(batch=1):</p>
+    <div class="bar"><div class="lab">搬权重 14GB / 2TB/s</div><div class="track"><div class="fill f-bw" style="width:100%"></div></div><div class="val">~7 ms(每步下限)</div></div>
+    <div class="bar"><div class="lab">计算 14GFLOP / 312TF</div><div class="track"><div class="fill f-cp" style="width:1.5%"></div></div><div class="val">~0.05 ms(算力只用 &lt;1%)</div></div>
+    <p style="margin-bottom:0;color:var(--muted);font-size:14px">GPU 几百 TFLOPS 的算力在 decode 时大部分空转,
+    晶体管都在等数据从 HBM 流过——这就是内存金字塔"片上快而小、片下大而慢"的张力在推理上的显形。</p>
+  </div>
+
+  <h2>4 · batch 杠杆:让每次读带宽物尽其用</h2>
+  <div class="panel">
+    <p>decode 拼 batch:B 个请求共享同一次权重读取(HBM 流量几乎不变),计算量翻 B 倍 →
+    算术强度被抬起来,逐步滑向算力受限。vLLM 的 <b>continuous batching</b> 就是每步动态插拔请求、把 B 维持到最大。</p>
+    <div class="bar"><div class="lab">B=1</div><div class="track"><div class="fill f-bw" style="width:100%"></div></div><div class="val">读权重 7ms,算 1 份 → 带宽浪费</div></div>
+    <div class="bar"><div class="lab">B=16</div><div class="track"><div class="fill f-bw" style="width:100%"></div></div><div class="val">读权重 ~7ms,算 16 份 → 接近回本</div></div>
+    <div class="bar"><div class="lab">B=64+</div><div class="track"><div class="fill f-cp" style="width:100%"></div></div><div class="val">瓶颈翻转到算力侧 → GPU 喂饱</div></div>
+    <p style="margin-bottom:0;color:var(--muted);font-size:14px">另一头的限制:<b>KV cache 随序列线性膨胀</b>,
+    batch 上限常常不是算力,而是"KV cache 塞不下了"——PagedAttention 分页正是在 HBM 这一层内部省容量。</p>
+  </div>
+
+  <h2>5 · vLLM 一步 decode 的完整循环(CPU ↔ GPU)</h2>
+  <div class="loop">
+    <div class="cpu">
+      <h4>CPU · vLLM 调度器</h4>
+      <ul>
+        <li>组 batch,步间换入/换出请求</li>
+        <li>查 KV cache block 表</li>
+        <li>发射 kernel 串(prefill 逐个发)</li>
+        <li>decode 走 <b>CUDA Graph</b> 一次重放整图</li>
+        <li>把新 token 塞回下一轮 batch</li>
+      </ul>
+    </div>
+    <div class="mid"><div class="arr">⇄</div>PCIe<br>kernel<br>+token id</div>
+    <div class="gpu">
+      <h4>GPU · 被动执行</h4>
+      <div class="hbm">HBM:权重(常驻,几十GB) + KV cache(随序列膨胀) + 本步 token ids(几字节)</div>
+      <div class="smrow">
+        <span class="sm">GEMV</span><span class="sm">attention(读KV)</span><span class="sm">MLP</span><span class="sm">采样</span>
+      </div>
+      <p style="font-size:12.5px;color:var(--muted);margin:9px 0 0">GPU 只做三件事:<b>收 kernel → 按塔搬运数据 → 交回 logits</b>。什么时候收、收多大批,全由 CPU 决定。</p>
+    </div>
+  </div>
+
+  <h2>6 · 四环定位:任何推理优化都挂在这条流水线上</h2>
+  <div class="grid4">
+    <div class="card">
+      <h3>a. 省 HBM 容量 <em>让大块头更小</em></h3>
+      <ul><li>权重量化(14GB→更小)</li><li>PagedAttention:KV 分页不浪费</li></ul>
+    </div>
+    <div class="card">
+      <h3>b. 省带宽流量 <em>让每次读更值</em></h3>
+      <ul><li>continuous batching 抬算术强度</li><li>prefix cache 复用已算好的 KV</li></ul>
+    </div>
+    <div class="card">
+      <h3>c. 省跨层搬运 <em>HBM↔片上 SRAM</em></h3>
+      <ul><li>FlashAttention 分块留在片上反复用</li><li>算子融合:多个 kernel 并成一个</li></ul>
+    </div>
+    <div class="card">
+      <h3>d. 省 GPU 外空转 <em>launch / 等待</em></h3>
+      <ul><li>CUDA Graph 压 launch 次数</li><li>调度与计算重叠、prefill/decode 并行</li></ul>
+    </div>
+  </div>
+
+  <div class="panel takeaway">
+    <p style="margin-top:0"><b>带走</b>:看到任何 LLM 推理系统优化(vLLM / SGLang / TensorRT-LLM…),
+    先不记技巧,先问<b>它作用在这四环中的哪一环</b>。识别信号:听它反复念叨的是"容量/占用"、"带宽/复用"、
+    "搬运/融合",还是"launch/调度"。四环加起来,就是 GPU 参与 LLM 推理的全部戏份。</p>
+  </div>
+</div>
+</body>
+</html>

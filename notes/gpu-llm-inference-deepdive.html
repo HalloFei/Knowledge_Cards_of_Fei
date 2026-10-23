@@ -1,0 +1,602 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GPU 眼中的 Transformer · 从一层模型到多卡推理的硬件深潜</title>
+<style>
+  :root{
+    --bg:#0f1420; --panel:#171e2e; --ink:#e6ebf5; --muted:#8b97ad;
+    --line:#2a3450; --accent:#5aa9ff; --warm:#ffb454; --green:#5ad19b;
+    --pink:#ff7eb6; --sram:#3b6cff; --dram:#c8622a; --comm:#b48cff;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:radial-gradient(1200px 600px at 70% -10%,#1b2540,#0f1420);
+    color:var(--ink);font:16px/1.7 -apple-system,"Segoe UI",Roboto,"Microsoft YaHei",sans-serif;}
+  .wrap{max-width:1080px;margin:0 auto;padding:48px 22px 80px;}
+  h1{font-size:32px;line-height:1.3;margin:0 0 6px;letter-spacing:.3px}
+  .sub{color:var(--muted);font-size:15px;margin-bottom:4px}
+  .meta{color:var(--muted);font-size:13px;border-bottom:1px solid var(--line);padding-bottom:18px;margin-bottom:34px}
+  h2{font-size:23px;margin:50px 0 16px;padding-left:12px;border-left:4px solid var(--accent)}
+  h3{font-size:18px;margin:24px 0 10px;color:#dbe6ff}
+  p{margin:12px 0}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:22px;margin:20px 0}
+  .card{background:#131a29;border:1px solid var(--line);border-radius:12px;padding:16px}
+  b,strong{color:#fff}
+  code{font-family:Consolas,"Courier New",monospace;background:#0d1320;border:1px solid #26314d;border-radius:5px;padding:1px 6px;font-size:13.5px;color:#bcd7ff}
+  .tag{display:inline-block;font-size:12px;padding:2px 9px;border-radius:20px;border:1px solid var(--line);color:var(--muted);margin-left:6px;vertical-align:middle}
+  .tag.blue{color:#a9c2ff;border-color:#33509c}
+  .tag.warm{color:#ffc59a;border-color:#8a4a24}
+  .tag.green{color:#b4ecc9;border-color:#3f7a4f}
+  .tag.purple{color:#dcc2ff;border-color:#5a3a78}
+  .flow{font-family:Consolas,monospace;font-size:13px;color:var(--ink);background:#0d1320;border-radius:8px;padding:14px;margin-top:10px;line-height:1.9;overflow-x:auto}
+
+  /* transformer stack */
+  .stack{display:flex;flex-direction:column;align-items:center;gap:6px;margin:14px 0}
+  .layer{width:100%;border:1px solid #3a4a74;border-radius:12px;background:#131c30;padding:12px 14px}
+  .layer .head{font-size:13px;color:var(--muted);margin-bottom:8px;text-align:center}
+  .blockrow{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .block{border-radius:10px;padding:10px 12px;font-size:13.5px}
+  .attn{background:#172d4a;border:1px solid #2f5b8a;color:#cfe3ff}
+  .mlp{background:#3a2a17;border:1px solid #7a5a2f;color:#ffe3bd}
+  .block b{display:block;font-size:14px;margin-bottom:4px}
+  .stack .arrow{color:var(--muted);font-size:12px;letter-spacing:1px}
+
+  /* hw micro */
+  .gpurow{display:grid;grid-template-columns:1.1fr 1.5fr;gap:16px;align-items:stretch}
+  .gpu{border-radius:14px;border:1px solid #4e3560;background:#1d1429;padding:16px}
+  .gpu h4,.smbox h4{margin:0 0 10px;font-size:15px;color:#e6d2ff}
+  .smbox{border:1px solid #5a3a78;border-radius:10px;background:#271839;padding:12px;margin-bottom:10px}
+  .smrow{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px}
+  .sm{background:#33204a;border:1px solid #5a3a78;color:#dcc2ff;border-radius:7px;padding:4px 9px;font-size:12px;font-weight:600}
+  .unit{background:#1a2338;border:1px solid #33436e;border-radius:8px;padding:10px;margin-top:6px}
+  .unit h5{margin:0 0 5px;font-size:13px;color:#bcd7ff}
+  .unit p{margin:0;font-size:12.5px;color:var(--muted)}
+
+  /* hierarchy diagram */
+  .layers{display:flex;flex-direction:column;gap:8px;margin:12px 0}
+  .hier{display:grid;grid-template-columns:140px 1fr;gap:10px;align-items:center;background:#0d1320;border:1px solid #26314d;border-radius:10px;padding:8px 12px}
+  .hier .name{font-weight:700;font-size:14px}
+  .hier .spec{font-size:12.5px;color:var(--muted)}
+  .hier .cap{height:12px;border-radius:6px;background:linear-gradient(90deg,#8fd4ff,#3b6cff)}
+  .hier.hbm .cap{background:linear-gradient(90deg,#ffcf9a,#c8622a)}
+  .hier.l2 .cap{background:linear-gradient(90deg,#a7b6ff,#6d7ff0)}
+  .hier.reg .cap{background:linear-gradient(90deg,#7fc4ff,#4f93f0)}
+
+  /* kernel tile diagram */
+  .tilegrid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .tile{font-family:Consolas,monospace;font-size:12.5px;background:#0d1320;border:1px solid #26314d;border-radius:10px;padding:12px;line-height:1.8}
+  .tile .t{color:#8fd4ff}
+  .tile .muted{color:var(--muted)}
+  .tagrow{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}
+
+  /* compare tables */
+  .cmp{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .cmp .card h3{margin:0 0 8px}
+  .cmp .card.pre h3{color:var(--green)}
+  .cmp .card.dec h3{color:var(--warm)}
+  .cmp .card.moe h3{color:var(--pink)}
+  .card ul{margin:0;padding-left:18px;font-size:14px}
+  .card li{margin:5px 0}
+  .pill{display:inline-block;font-size:12px;font-weight:700;border-radius:6px;padding:1px 8px;margin-left:4px;color:#0c1220}
+  .pill.g{background:var(--green)} .pill.w{background:var(--warm)} .pill.p{background:var(--pink)}
+
+  /* bars */
+  .bar{display:flex;align-items:center;gap:10px;margin:9px 0}
+  .bar .lab{width:150px;flex:none;font-size:12.5px;color:var(--muted)}
+  .bar .track{flex:1;min-width:40px;background:#0d1320;border-radius:6px;overflow:hidden;height:22px}
+  .bar .fill{height:100%;border-radius:6px}
+  .bar .val{width:230px;flex:none;font-size:12.5px;font-weight:600;color:var(--ink);text-align:right;line-height:1.35}
+  .f-bw{background:linear-gradient(90deg,#ffcf9a,#e8873f)}
+  .f-cp{background:linear-gradient(90deg,#8fe8b8,#3fae7d)}
+  .f-cm{background:linear-gradient(90deg,#d5b8ff,#8b5cf6)}
+
+  /* multi-card */
+  .parrow{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px}
+  .parrow .card h3{font-size:15.5px;margin-bottom:8px}
+  .parrow .card h3 span{display:block;font-size:12.5px;color:var(--muted);font-weight:500}
+  .comm{font-size:12.5px;color:#dcc2ff;background:#271839;border:1px solid #5a3a78;border-radius:7px;padding:5px 9px;margin-top:6px}
+
+  .takeaway{background:linear-gradient(90deg,#182034,#151d2e);border:1px solid var(--line)}
+  .takeaway li{margin:8px 0}
+  a{color:var(--accent)}
+  .note{background:#121b2c;border-left:3px solid var(--accent);border-radius:6px;padding:12px 14px;font-size:14px;color:#c6d2e8;margin:14px 0}
+  @media(max-width:760px){
+    .gpurow,.tilegrid,.cmp,.parrow{grid-template-columns:1fr}
+    .blockrow{grid-template-columns:1fr}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>GPU 眼中的 Transformer</h1>
+  <div class="sub">从一层模型的结构，到 kernel 里的 warp/block，再到多卡推理的硬件深潜</div>
+  <div class="meta">
+    companion note: 20260818T115251--gpu-in-llm-inference__concept.md · 前置: gpu-memory-hierarchy.html · 上篇: gpu-llm-inference.html · 2026-08-18
+  </div>
+
+  <h2>0 · 这一篇要回答什么</h2>
+  <div class="panel">
+    <p>上一篇用“一枚 token 进卡”讲清了 <b>prefill vs decode</b>、<b>HBM 带宽</b>和 <b>batch 杠杆</b>。这篇往更深处走，回答几个更具体的问题：</p>
+    <ul>
+      <li>LLM 有几十层，<b>每一层里面到底是什么？</b>是不是每层都有一套完整的 attention + MLP？</li>
+      <li>模型在 GPU 上并不是一个整体，而是被拆成很多 <b>kernel</b>。kernel 启动时定义的 <b>grid → block → warp → thread</b> 层次，是如何落到 SM、Tensor Core、共享内存上的？</li>
+      <li><b>prefill / decode 是推理阶段，attention / MLP 是每一层里的两类子层</b>，它们不是并列的“阶段”。本篇会分别说清：每个阶段里 attention 和 MLP 分别卡在 GPU 的哪个部件上，为什么优化 inference pipeline 的人总在说“带宽”“融合”“通信”？</li>
+      <li>从<b>单卡</b>到<b>多卡</b>再到 <b>MoE</b>，数据流和瓶颈会发生什么变化？</li>
+    </ul>
+    <p style="margin-bottom:0">目标读者：已经知道 Transformer 大概怎么算，但不太清楚 GPU 底层执行模型的人。</p>
+  </div>
+
+  <h2>1 · 先补模型结构：Transformer 层到底长什么样</h2>
+  <div class="panel">
+    <p>先回答最基础的问题：<b>LLM 不是“一个大网络”，而是同一个模块叠很多次。</b>通常说的 7B、13B、70B 模型，基本结构是：</p>
+    <div class="flow">
+      token 序列
+        → embedding
+        → [ Layer 1 → Layer 2 → … → Layer N ]
+        → final norm
+        → lm_head（映射到词表）
+        → softmax/采样
+        → 下一个 token
+    </div>
+    <p>这里的 <b>Layer</b> 就是我们常说的 Transformer block / decoder layer。每一层都是<b>一个完整的 attention 子层 + 一个完整的 MLP 子层</b>，外面再套残差连接和归一化。也就是说：</p>
+    <div class="stack">
+      <div class="layer">
+        <div class="head">Layer 1（下面这个结构会原样重复 N 次）</div>
+        <div class="blockrow">
+          <div class="block attn">
+            <b>① Attention 子层</b>
+            QKV 投影 → 注意力计算 → 输出投影<br>
+            作用：让每个 token 从上下文里“收集信息”
+          </div>
+          <div class="block mlp">
+            <b>② MLP 子层</b>
+            升维 → 激活 → 降维（Llama 风格为 gate/up/down）<br>
+            作用：对每个 token 做独立非线性变换
+          </div>
+        </div>
+        <div style="margin-top:8px;font-size:12.5px;color:var(--muted);text-align:center">前置/后置残差 + RMSNorm/LayerNorm 通常也在这里</div>
+      </div>
+      <div class="arrow">▼ Layer 2（同一套结构，但参数不同）</div>
+      <div class="arrow">▼ …</div>
+      <div class="arrow">▼ Layer N（同一套结构，但参数不同）</div>
+    </div>
+    <p>所以“每个 layer 都有一份完整 attention + 一份完整 MLP”是对的。不同 layer 的参数互不共享；这也是模型参数量大的主要原因。例如一个 7B 模型，绝大部分参数来自每一层里的 <b>QKV 投影、输出投影、MLP 升维/降维矩阵</b>，以及最后的 lm_head。</p>
+  </div>
+
+  <h3>1.1 · 一个 Dense Transformer 层里的参数与张量形状</h3>
+  <div class="panel">
+    <p>以常见 Llama/Qwen 风格为例（忽略 GQA/MQA 细节，先看主线）：</p>
+    <div class="flow">
+      x: [batch, seq, hidden]
+
+      Attention 子层:
+        q = x @ Wq      # [batch, seq, num_heads * head_dim]
+        k = x @ Wk      # 同上
+        v = x @ Wv      # 同上
+        attn = softmax(q @ k^T / sqrt(d)) @ v
+        out = attn @ Wo # [batch, seq, hidden]
+
+      MLP 子层（Llama 风格）:
+        gate = x @ Wgate
+        up   = x @ Wup
+        down = SiLU(gate) * up @ Wdown
+        # 也有更简单的 MLP: down(act(up(x)))
+
+      out = x + attn_out
+      out = out + mlp_out
+    </div>
+    <p>注意：<b>每一层都是这样一组 GEMM/GEMV + attention + 非线性</b>。LLM 推理时，prefill 和 decode 都会把这一套按顺序走完；区别只是当前批量里有多少 token、矩阵的形状是“大乘大”还是“大乘小”。</p>
+  </div>
+
+  <h2>2 · 模型参数在 GPU 里住在哪</h2>
+  <div class="panel">
+    <p>上一篇讲过内存金字塔，这里直接落到推理场景。一张 H200 的典型资源大致是：</p>
+    <div class="layers">
+      <div class="hier reg">
+        <div class="name">寄存器</div>
+        <div class="spec">每个 SM 几十 KB ~ 256KB 级，单线程私有，最快</div>
+        <div class="cap" style="width:5%"></div>
+      </div>
+      <div class="hier">
+        <div class="name">shared memory / L1</div>
+        <div class="spec">每个 SM 约 256KB 级，block 内共享，kernel 手动管理</div>
+        <div class="cap" style="width:8%"></div>
+      </div>
+      <div class="hier l2">
+        <div class="name">L2</div>
+        <div class="spec">H200 约 50MB 级，所有 SM 共享，自动缓存</div>
+        <div class="cap" style="width:20%"></div>
+      </div>
+      <div class="hier hbm">
+        <div class="name">HBM3e</div>
+        <div class="spec">H200 141GB，约 4.8TB/s，权重/KV cache/激活值的主要仓库</div>
+        <div class="cap" style="width:100%"></div>
+      </div>
+    </div>
+    <div class="note">
+      H200 不是“一张卡算力特别猛”这么简单：它的 <b>141GB HBM3e 容量</b>和 <b>约 4.8TB/s 带宽</b>对 LLM 推理同样关键。算力上它延续 Hopper 架构，FP16 Tensor Core 稠密算力约 <b>989 TFLOPS</b>（与 H100 SXM 同款计算核心）。
+    </div>
+    <p>一次前向中，GPU 需要“读”的东西分两类：</p>
+    <ul>
+      <li><b>权重（weights）</b>：几十 GB，常驻 HBM。每个 token 每层都要读，decode 时每步几乎全读一遍。</li>
+      <li><b>KV cache</b>：随序列长度增长，存在 HBM。attention 阶段要读历史 K/V。</li>
+      <li><b>激活值（activations）</b>：MB 到几百 MB 级，prefill 时会比较大，decode 时很小。</li>
+    </ul>
+  </div>
+
+  <h2>3 · 从模型到 kernel：CPU 负责翻译，GPU 负责执行</h2>
+  <div class="panel">
+    <p>GPU 并不知道“Transformer”是什么。推理框架（vLLM、TensorRT-LLM 等）在 CPU 上把模型的计算图翻译成<b>一串 CUDA kernel</b>，再逐个发射到 GPU。一个 kernel 就是一段在 GPU 上运行的小程序，例如“算一个 GEMM”“算一次 FlashAttention”“算一次 RMSNorm”。</p>
+    <div class="flow">
+      CPU / 框架
+        └─ 把每层算子编译成 kernel：GemmQKV、FlashAttention、GemmOut、GemmGate、GemmUp、GemmDown、RMSNorm、ResidualAdd…
+        └─ launch kernel 到 GPU stream
+      GPU
+        └─ kernel 启动时定义 grid，grid 的多个 block 被分发到 SM 上执行
+        └─ 从 HBM/L2 读数据 → 在 SM 里算 → 写回 HBM/L2
+    </div>
+    <p>因此“GPU 参与 LLM 推理”的本质是：<b>CPU 编排 kernel，GPU 拼命把每个 kernel 跑快</b>。性能优化很多时候就是减少 kernel 数量、减少 kernel 里的数据搬运、或让 kernel 更充分地利用硬件资源。</p>
+  </div>
+
+  <h2>4 · Kernel 的微观世界：grid / block / warp / thread</h2>
+  <div class="panel">
+    <p>一个 kernel 启动后，并不是“一个巨大的函数在 GPU 上从头跑到尾”。它定义了一个嵌套的并行层次：</p>
+    <div class="flow">
+      Kernel（一段提交给 GPU 的程序/任务）
+        └─ 启动时创建一个 Grid（线程格）
+            └─ Grid 由多个 Block（线程块）组成
+                └─ Block 由若干 Warp 组成，Warp = 32 threads
+                    └─ Thread 是执行指令的单个线程
+    </div>
+      <p>这里要区分两个不同层面的概念：<b>kernel 是“被提交的任务”，不是执行单元</b>；<b>warp 是 SM 内部调度指令的粒度</b>。连接关系是：CPU 发射 kernel 时，kernel 会定义一个 grid；GPU 上的 block 调度器把 grid 中的 block 分发到有空闲资源的 SM；SM 再把驻留在自己上的 block 中的线程按 warp 分组、逐条调度执行。所以不是说“kernel 直接切到 SM”，而是 <b>kernel → grid → block 分发到 SM → SM 按 warp 调度 thread</b>。</p>
+      <div class="cmp">
+        <div class="card">
+          <h3>软件/逻辑视角：一次 kernel launch</h3>
+          <div class="flow" style="margin-top:8px">
+Kernel
+  └─ Grid（本次 launch 的“全部 block 的集合”，不是硬件）
+      └─ Block（一个线程组，一个待执行的 work item）
+          └─ Warp（32 个线程，SM 的调度粒度）
+              └─ Thread
+          </div>
+          <p style="margin-bottom:0;color:var(--muted);font-size:13.5px">grid 就是这次 kernel 调用里所有 block 的总称；它只存在于“这次调用”的逻辑层面，不是一个芯片上的物理容器。</p>
+        </div>
+        <div class="card">
+          <h3>硬件/物理视角：执行资源</h3>
+          <div class="flow" style="margin-top:8px">
+GPU
+  └─ 多个 SM（物理执行单元）
+      └─ warp scheduler（调度 warp）
+          └─ thread cores / tensor cores
+          </div>
+          <p style="margin-bottom:0;color:var(--muted);font-size:13.5px">block 不是 SM 的固定子部件，而是被调度到 SM 上执行的“工作块”；一个 SM 可以同时驻留多个 block，block 做完后 SM 再接收新的 block。</p>
+        </div>
+      </div>
+      <p>所以“kernel → grid → SM → block”不准确：grid 和 block 是软件逻辑层，SM 是硬件资源层。正确映射是 kernel 的 grid 里有很多 block，硬件调度器把 block 分配到 SM；进入 SM 后，block 内部的 warp 才被调度执行。</p>
+      <p>那 block 为什么有“自己的 shared memory”？因为 block 并不是自己带着一块物理内存，而是当 block 被调度到某个 SM 上时，硬件会从该 SM 的物理 SRAM 中划出一部分给它作为 shared memory；block 结束或退出后，这部分归还给 SM，供下一个 block 使用。同样，thread 也不是一个独立的物理核心，它是逻辑执行上下文；真正物理的是 SM 里的执行单元、寄存器堆、shared memory、Tensor Core 等。warp 则是硬件把 32 个逻辑 thread 捆在一起调度的粒度。</p>
+
+
+    <div class="gpurow">
+      <div class="gpu">
+        <h4>一张 H200 的芯片侧视图（简化）</h4>
+        <div class="smbox">
+          <h4>SM（Streaming Multiprocessor）× 很多个</h4>
+          <div class="smrow">
+            <span class="sm">Tensor Core</span>
+            <span class="sm">FP32/INT32 Core</span>
+            <span class="sm">shared memory / L1</span>
+            <span class="sm">Register File</span>
+            <span class="sm">Warp Scheduler</span>
+          </div>
+          <p style="font-size:12.5px;color:var(--muted);margin:8px 0 0">每个 SM 能同时驻留多个 block，block 再以 warp 为单位被调度执行。</p>
+        </div>
+        <div class="unit">
+          <h5>Warp = 32 threads</h5>
+          <p>32 个线程一起执行同一条指令，但数据不同（SIMT）。如果分支发散，warp 会串行执行各分支，这是性能杀手之一。</p>
+        </div>
+        <div class="unit">
+          <h5>Block = 若干 warp</h5>
+          <p>block 内的线程可以通过 shared memory 协作、同步。block 之间不能直接共享 shared memory。</p>
+        </div>
+        <div class="unit">
+          <h5>Tensor Core</h5>
+          <p>专门做 4×4/16×16 这类小矩阵乘加（MMA），一次指令算一大块乘加，是 GEMM/GEMV 的算力来源。</p>
+        </div>
+      </div>
+      <div class="gpu">
+        <h4>数据流动：为什么“搬运”常比“计算”贵</h4>
+        <div class="layers">
+          <div class="hier reg">
+            <div class="name">寄存器</div>
+            <div class="spec">单线程私有，计算直接发生在这一层</div>
+            <div class="cap" style="width:5%"></div>
+          </div>
+          <div class="hier">
+            <div class="name">shared memory</div>
+            <div class="spec">block 共享，GEMM/Attention 的分块数据放在这里复用</div>
+            <div class="cap" style="width:10%"></div>
+          </div>
+          <div class="hier l2">
+            <div class="name">L2</div>
+            <div class="spec">跨 SM 共享缓存；KV cache 的复用常在这里体现</div>
+            <div class="cap" style="width:25%"></div>
+          </div>
+          <div class="hier hbm">
+            <div class="name">HBM</div>
+            <div class="spec">权重和长序列 KV 的主仓库，容量大但最慢</div>
+            <div class="cap" style="width:100%"></div>
+          </div>
+        </div>
+        <p style="font-size:13px;color:var(--muted)">一个 kernel 的耗时常常由“从 HBM/L2 搬到 shared memory/寄存器”主导，而不是由 ALU 计算主导。理解这一点后，很多推理优化就变成“减少搬运 / 增加每次搬运后的计算量”。</p>
+      </div>
+    </div>
+    <div class="note">
+      <b>Occupancy（占用率）</b>就是“一个 SM 上能同时驻留多少 block/warp”。不是越高越好，但太低会让 SM 无法用并行隐藏访存延迟。LLM 推理中，decode 的 GEMV 往往不是卡 occupancy，而是卡 HBM 带宽。
+    </div>
+  </div>
+
+  <h2>5 · 具体 kernel 怎么映射到硬件</h2>
+  <p>这一节看三个最重要的 kernel 类型：GEMM/GEMV、Attention、Norm/激活。理解了它们，就理解了 LLM 推理的大部分硬件行为。</p>
+
+  <h3>5.1 · GEMM / GEMV：MLP 和投影层的真身</h3>
+  <div class="panel">
+    <p>Transformer 里绝大多数计算是 <b>矩阵乘法</b>。例如 <code>x @ W</code>，x 是激活，W 是权重。GPU 上的 GEMM kernel 不会把整个大矩阵一次性塞进 SM，而是切成 <b>tile（分块）</b>：</p>
+    <div class="tilegrid">
+      <div class="tile">
+        <div class="t">Prefill 的 GEMM（大矩阵 × 大矩阵）</div>
+        <div class="muted">形状类似 [N_tokens, hidden] × [hidden, 4*hidden]</div><br>
+        - 每个 block 负责输出矩阵中的一小块 tile<br>
+        - 例如 128×128 输出 tile<br>
+        - 数据分块从 HBM → L2 → shared memory<br>
+        - Tensor Core 在寄存器里做 16×16×16 这类 MMA<br>
+        - 计算密度高，SM 能吃饱
+      </div>
+      <div class="tile">
+        <div class="t">Decode 的 GEMV（矩阵 × 向量）</div>
+        <div class="muted">形状类似 [1, hidden] × [hidden, 4*hidden]</div><br>
+        - 输出只有一行<br>
+        - 每个 block 负责读取权重的一段行/列<br>
+        - 计算量极小，但权重还是要全部读一遍<br>
+        - 大部分时间在等 HBM 数据，Tensor Core 闲着<br>
+        - 典型 memory-bound
+      </div>
+    </div>
+    <p>映射到硬件上，GEMM 的经典做法是：</p>
+    <ul>
+      <li><b>Block 级</b>：把输出矩阵切成若干 tile，每个 block 负责一块，block 之间并行。</li>
+      <li><b>Warp 级</b>：block 内再按 warp 切，每个 warp 负责 tile 里的一个子块。</li>
+      <li><b>Thread 级</b>：warp 里的 32 个线程共同把数据从 shared memory 搬到寄存器，再交给 Tensor Core 做矩阵乘加。</li>
+      <li><b>shared memory 复用</b>：A、B 的两个小分块先读到 shared memory，算完一小块再换下一块，避免每个数都从 HBM 读。</li>
+    </ul>
+    <div class="note">
+      decode 时 GEMM 退化成 GEMV（M=1），权重矩阵仍然巨大。无论 kernel 切得多好，<b>必须把整份权重从 HBM 读一遍</b>这个物理事实不会消失。这也是“decode 卡带宽”的根本原因。
+    </div>
+  </div>
+
+  <h3>5.2 · Attention：FlashAttention 和 KV cache 的硬件逻辑</h3>
+  <div class="panel">
+    <p>Attention 子层除了 QKV 投影是 GEMM，核心的“注意力计算”也是一个专门 kernel。它的数据访问模式比普通 GEMM 更特殊：每个 token 都要看所有历史 token 的 K/V。</p>
+    <div class="flow">
+      Q: [batch, heads, seq, head_dim]
+      K: [batch, heads, seq, head_dim]   # 长序列时 K/V 就是 KV cache
+      V: [batch, heads, seq, head_dim]
+
+      对每个 query：
+        scores = Q @ K^T
+        probs  = softmax(scores)
+        out    = probs @ V
+    </div>
+    <p>朴素实现会把 <code>scores</code> 和 <code>probs</code> 写回 HBM，再读回来。这会浪费大量带宽。FlashAttention 的硬件思想是：</p>
+    <ul>
+      <li>把 Q、K、V 都切成小块，<b>在 shared memory 里分块计算</b>，避免把中间 scores 写回 HBM。</li>
+      <li>用 <b>online softmax</b> 技巧边算边更新归一化统计量，不必等全部 scores 算完。</li>
+      <li>每个 block 负责一个 query 块，K/V 块不断从 HBM/L2 流入 shared memory，在片上完成“读一次、算多次”。</li>
+    </ul>
+    <p>在 <b>decode</b> 场景，Q 只有 1 个 token，但需要读取之前所有 token 的 K/V。此时 attention kernel 的瓶颈不是算力，而是<b>从 HBM/L2 读 KV cache 的带宽</b>。KV cache 越大，每一步读取越贵。</p>
+    <div class="note">
+      所以 GQA（Grouped-Query Attention）的动机也清楚了：<b>减少 K/V 头数 = 减少 KV cache 的存储和读取量</b>，对 decode 带宽非常友好。
+    </div>
+  </div>
+
+  <h3>5.3 · Norm、残差、激活：小而频繁的 memory-bound kernel</h3>
+  <div class="panel">
+    <p>每一层还有 RMSNorm / LayerNorm、残差相加、SiLU/GELU 激活。这些算子计算量很小，但每次都要把张量读一遍、写一遍，所以通常也是 memory-bound。性能优化喜欢把它们 <b>融合</b> 到前后 GEMM kernel 里，减少 HBM 往返。</p>
+    <div class="flow">
+      不融合：GEMM → 写 HBM → 读 HBM → 加残差 → 写 HBM → 读 HBM → RMSNorm → 写 HBM …
+      融合后：一个 kernel 里顺便完成 epilogue（残差、Norm、激活），少几次 HBM 读写
+    </div>
+    <p>这也是推理框架里“算子融合（operator fusion）”最直接的价值。</p>
+  </div>
+
+  <h2>6 · prefill vs decode：同一套模型在不同推理阶段，瓶颈如何变化</h2>
+    <p>先把维度对齐：<b>prefill / decode 是同一模型在自回归生成中的两个阶段</b>；<b>attention / MLP 是每个 layer 内部的两个组成部分</b>。这两个维度不是并列关系——prefill 阶段要跑 attention + MLP，decode 阶段也要跑 attention + MLP。下面比较的是同一套 attention+MLP 在两种阶段下的瓶颈差异。</p>
+
+  <div class="cmp">
+    <div class="card pre">
+      <h3>Prefill（预填充）<span class="pill g">compute-bound</span></h3>
+      <ul>
+        <li>一次处理整段 prompt，例如 2048 个 token。</li>
+        <li>GEMM 是大矩阵乘，Tensor Core 占用率高。</li>
+        <li>权重从 HBM 读一遍，但被 N 个 token 的计算摊薄。</li>
+        <li>瓶颈通常：<b>算力 / SM 吞吐 / L2 到 shared memory 的搬运</b>。</li>
+        <li>对应指标：TTFT（首 token 延迟）。</li>
+      </ul>
+    </div>
+    <div class="card dec">
+      <h3>Decode（解码）<span class="pill w">memory-bound</span></h3>
+      <ul>
+        <li>每步只生成一个新 token，自回归循环。</li>
+        <li>GEMM 变 GEMV，Tensor Core 利用率很低。</li>
+        <li>每步仍要读全部权重 + 读 KV cache。</li>
+        <li>瓶颈通常：<b>HBM 带宽 / KV cache 带宽</b>。</li>
+        <li>对应指标：TPOT / ITL（每 token 延迟）。</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="panel">
+    <p>拿 <b>7B Dense 模型 FP16 在 H200</b> 上做 batch=1 decode 的粗略时间账：</p>
+    <div class="bar"><div class="lab">搬权重 14GB / 4.8TB/s</div><div class="track"><div class="fill f-bw" style="width:100%"></div></div><div class="val">~2.9 ms（每步下限）</div></div>
+    <div class="bar"><div class="lab">计算 14 GFLOP / 989 TFLOPS</div><div class="track"><div class="fill f-cp" style="width:1.5%"></div></div><div class="val">~0.014 ms（算力几乎空转）</div></div>
+    <p style="margin-bottom:0;color:var(--muted);font-size:14px">推导链：每步需要读一遍约 14GB 权重 → 带宽时间 ≈ 14GB ÷ 4.8TB/s ≈ 2.9ms；每步计算量 ≈ 2 × 7B ≈ 14 GFLOP → 计算时间 ≈ 14GFLOP ÷ 989TFLOPS ≈ 0.014ms；带宽时间远大于计算时间，所以瓶颈在 HBM 带宽。batch=1 时，无论 kernel 写得多好，decode 都被“每步读一遍 14GB 权重”钉死在 ~2.9ms 附近。量化到 INT8/FP8 后权重变小，这个下限才会直接下降。</p>
+  </div>
+
+  <h2>7 · Batch 如何改变硬件行为</h2>
+  <div class="panel">
+    <p>decode 的救星是 batch：让多个请求在同一个 decode step 里一起算。此时每一层的权重仍只读一次，但计算量变成 B 倍。用 H200 的 7B 例子：</p>
+    <div class="bar"><div class="lab">B=1</div><div class="track"><div class="fill f-bw" style="width:100%"></div></div><div class="val">读权重 ~2.9ms，算 ~0.014ms → 带宽浪费</div></div>
+    <div class="bar"><div class="lab">B=64</div><div class="track"><div class="fill f-bw" style="width:100%"></div></div><div class="val">读权重 ~2.9ms，算 ~0.91ms → 仍卡带宽</div></div>
+    <div class="bar"><div class="lab">B=256</div><div class="track"><div class="fill f-cp" style="width:100%"></div></div><div class="val">读权重 ~2.9ms，算 ~3.6ms → 翻转成算力瓶颈</div></div>
+      <p style="color:var(--muted);font-size:14px">粗略交叉点：B ≈ 2.9ms ÷ 0.014ms ≈ 207。也就是说，在只考虑权重读取和计算时，B 要超过 200 左右才真正从带宽瓶颈翻到算力瓶颈；实际还会叠加 KV cache 读取、launch、通信等开销。</p>
+
+    <p>vLLM 的 <b>continuous batching</b> 就是每一步动态把“正在 decode 的请求”拼在一起，并允许新请求随时插入 prefill，让 GPU 尽量保持大 batch。</p>
+    <p style="margin-bottom:0">但 batch 不是无限大。一个硬约束是 <b>KV cache 容量</b>：每个请求的 K/V 随生成长度增长，batch 越大、序列越长，HBM 里 KV cache 占用越高。PagedAttention 就是解决“KV cache 在 HBM 内部如何不浪费”的经典方案。</p>
+  </div>
+
+  <h2>8 · 从单卡到多卡：模型装不下/算不动时怎么拆</h2>
+  <div class="panel">
+    <p>当模型超过单卡显存，或需要更高吞吐时，就要把模型/数据分布到多张 GPU。三种最基础的并行方式：</p>
+    <div class="parrow">
+      <div class="card">
+        <h3>Tensor Parallel（TP）<span>张量并行：把每一层的权重矩阵切成几份</span></h3>
+        <ul>
+          <li>每张卡只存一层权重的一部分。</li>
+          <li>同一个 GEMM 由多卡协作完成。</li>
+          <li>在需要跨卡归约的线性层后（例如 attention 输出投影、MLP 降维投影）需要 <b>AllReduce</b> 汇总部分结果；并不是每个矩阵乘后都有。</li>
+        </ul>
+        <div class="comm">通信点：每层多次 AllReduce → 对 NVLink 带宽敏感</div>
+      </div>
+      <div class="card">
+        <h3>Pipeline Parallel（PP）<span>流水线并行：按层切</span></h3>
+        <ul>
+          <li>第 1~N/2 层放 GPU0，后半层放 GPU1。</li>
+          <li>数据像流水线一样从前往后传。</li>
+          <li>减少单卡显存压力，但可能出现流水线气泡。</li>
+        </ul>
+        <div class="comm">通信点：层边界 P2P 传输，频率低于 TP</div>
+      </div>
+      <div class="card">
+        <h3>Data Parallel（DP）<span>数据并行：每卡一份完整模型</span></h3>
+        <ul>
+          <li>每张卡独立处理不同请求。</li>
+          <li>训练时需要梯度同步；推理时通常只是多副本负载均衡。</li>
+          <li>最简单，但每卡都要放下完整模型。</li>
+        </ul>
+        <div class="comm">推理时几乎没有卡间通信，但显存复制严重</div>
+      </div>
+    </div>
+    <p>实际推理系统常用组合，例如 <b>TP + PP + DP</b>：先张量切分把单层变小，再按层切分减少单卡层数，最后放多副本提高并发。多卡之间的通信走 <b>NVLink / NVSwitch</b>（单机）或 <b>RDMA/PCIe</b>（跨机），通信本身也会成为瓶颈。</p>
+    <div class="note">
+      多卡推理的思维切换：单卡优化主要盯 <b>HBM 带宽和 SM 利用率</b>；多卡优化还要盯 <b>通信量、通信频率、负载均衡</b>。Tensor Parallel 能减小每卡读权重的时间，但 AllReduce 可能吃掉省下的时间。
+    </div>
+  </div>
+
+  <h2>9 · Dense 之后：MoE 给 GPU 带来的新挑战</h2>
+  <div class="panel">
+    <p>前面讲的都是 Dense Transformer：每个 token 在每一层都会经过<b>同一个完整 MLP</b>。MoE（Mixture of Experts）则把 MLP 换成一堆“专家”小网络，每个 token 只经过其中少数几个专家。</p>
+    <div class="cmp">
+      <div class="card">
+        <h3>Dense MLP</h3>
+        <ul>
+          <li>每个 token 必须算全部 MLP 参数。</li>
+          <li>计算量约 = 2 × 参数量 × token 数（FLOPs），稳定可预测。</li>
+          <li>硬件行为：大 GEMM，权重全部读。</li>
+        </ul>
+      </div>
+      <div class="card moe">
+        <h3>MoE MLP <span class="pill p">sparse activation</span></h3>
+        <ul>
+          <li>Router 先给每个 token 选 top-k 专家。</li>
+          <li>只有被选中的专家参与计算，总计算量下降。</li>
+          <li>但所有专家权重仍可能放在 HBM 里，显存占用大。</li>
+          <li>token 到专家之间需要 <b>dispatch/combine</b>，甚至跨卡 All-to-All。</li>
+        </ul>
+      </div>
+    </div>
+    <p>从 GPU 视角看，MoE 不是简单“省了计算”：</p>
+    <ul>
+      <li><b>Router</b> 通常是一个小 GEMM + TopK，单看算力占比不大，但它决定后续 token 如何重排，可能间接影响访存和通信。</li>
+      <li><b>Token Dispatch</b>：把 token 按专家分组、重排，再送给对应专家 kernel。数据搬移可能很贵。</li>
+      <li><b>专家并行（EP）</b>：把不同专家放到不同 GPU。某个 token 要去别的卡上的专家时，就需要 <b>All-to-All</b> 通信。</li>
+      <li><b>负载不均</b>：热门专家可能收到过多 token，导致某些 GPU 忙、某些 GPU 闲。</li>
+    </ul>
+    <div class="note">
+      MoE 的硬件本质：用“稀疏计算 + 更灵活的通信/调度”换取“更少的 FLOPs”，但代价是更复杂的显存布局、访存模式、通信模式和负载均衡。优化 MoE 推理，常常不只是优化 GEMM，而是优化 <b>token 路由、专家分派、通信重叠</b>。
+    </div>
+  </div>
+
+  <h2>10 · 把常见优化动作挂回硬件</h2>
+  <div class="panel">
+    <p>现在可以建立一张“硬件定位图”。看到任何推理优化，先问它作用在哪一层：</p>
+    <div class="grid" style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+      <div class="card">
+        <h3 style="color:var(--warm)">a. 省 HBM 容量 / 省 KV cache</h3>
+        <ul>
+          <li>权重量化：14GB → 7GB/3.5GB，decode 带宽下限直接下降</li>
+          <li>PagedAttention：KV cache 分页，减少碎片浪费</li>
+          <li>GQA / MLA：减少 KV cache 体积</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3 style="color:var(--green)">b. 提高每次读带宽的收益</h3>
+        <ul>
+          <li>Continuous batching：加大 decode batch</li>
+          <li>Prefix caching：复用已算过的 KV</li>
+          <li>Speculative decoding：用小模型草拟多个候选 token，再让目标模型一次前向验证/接受</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3 style="color:var(--accent)">c. 减少 HBM ↔ shared memory 往返</h3>
+        <ul>
+          <li>FlashAttention：中间矩阵留在片上</li>
+          <li>算子融合：Norm/残差/激活并进 GEMM epilogue</li>
+          <li>更好的 tiling：提高 shared memory 数据复用</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3 style="color:var(--pink)">d. 减少 CPU 发射 / 通信 / 等待</h3>
+        <ul>
+          <li>CUDA Graph：把几百次 kernel launch 压成一次</li>
+          <li>多流并行：prefill 和 decode 重叠</li>
+          <li>TP/EP 通信优化：减少 AllReduce / All-to-All 次数或做通信隐藏</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <h2>11 · 一张图记住“GPU 参与 LLM 推理”</h2>
+  <div class="panel">
+    <div class="flow">
+      模型层视角：
+        prompt → 每层[Attention子层 + MLP子层] × N → lm_head → token
+
+      GPU 视角：
+        CPU 调度 → 发射 kernel → grid 的 block 分发到 SM → SM 按 warp 调度 thread
+        └─ 每个 kernel 都在做同一件事：
+           从 HBM/L2 搬数据到 shared memory/寄存器 → 用 Tensor Core/CUDA Core 算 → 写回
+
+      瓶颈视角：
+        prefill：大矩阵乘多 → compute-bound → 盯 Tensor Core / SM 利用率
+        decode：权重和 KV 反复读 → memory-bound → 盯 HBM 带宽 / KV cache 带宽
+        batch：把权重读一次变成服务 B 个 token → 把带宽瓶颈转回算力瓶颈
+        多卡：把单卡 HBM 装不下的模型拆开 → 新增通信瓶颈
+        MoE：减少计算但增加调度/通信/显存复杂度 → 瓶颈可能从算力移到路由和 All-to-All
+    </div>
+  </div>
+
+  <div class="panel takeaway">
+    <p style="margin-top:0"><b>带走</b>：</p>
+    <ul>
+      <li>LLM 是同一个 Transformer 层叠很多次；<b>每一层都有一个完整 attention 子层 + 一个完整 MLP 子层</b>。</li>
+        <li>注意维度：<b>prefill / decode 是推理阶段</b>，<b>attention / MLP 是每层内的子层</b>，不是四个并列的“阶段”。</li>
+
+      <li>GPU 被提交的最小独立任务是 <b>kernel</b>，但 kernel 不是执行单元；SM 的指令调度粒度是 <b>warp</b>（每个 warp 内 32 个线程并行执行同一条指令）。完整链路是 <b>kernel → grid → block 分发到 SM → SM 按 warp 调度 thread</b>。</li>
+      <li>MLP/投影层是 GEMM/GEMV，核心在 Tensor Core 和 shared memory tiling；attention 的核心在 KV cache 访问和 FlashAttention 分块；Norm/残差/激活是小型 memory-bound kernel，适合融合。</li>
+      <li>prefill 卡算力，decode 卡带宽；<b>batch</b> 是把 decode 从带宽困境拉出来的主要杠杆。</li>
+      <li>多卡引入通信瓶颈，MoE 引入调度/All-to-All 复杂度——优化永远要问：<b>当前瓶颈在 HBM、L2/shared memory、Tensor Core、还是通信？</b></li>
+    </ul>
+  </div>
+</div>
+</body>
+</html>

@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GPU 内存金字塔 · 概念图解</title>
+<style>
+  :root{
+    --bg:#0f1420; --panel:#171e2e; --ink:#e6ebf5; --muted:#8b97ad;
+    --line:#2a3450; --accent:#5aa9ff; --warm:#ffb454; --green:#5ad19b;
+    --pink:#ff7eb6; --sram:#3b6cff; --dram:#c8622a;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:radial-gradient(1200px 600px at 70% -10%,#1b2540,#0f1420);
+    color:var(--ink);font:16px/1.7 -apple-system,"Segoe UI",Roboto,"Microsoft YaHei",sans-serif;}
+  .wrap{max-width:960px;margin:0 auto;padding:48px 22px 80px;}
+  h1{font-size:30px;line-height:1.3;margin:0 0 6px;letter-spacing:.3px}
+  .sub{color:var(--muted);font-size:15px;margin-bottom:4px}
+  .meta{color:var(--muted);font-size:13px;border-bottom:1px solid var(--line);padding-bottom:18px;margin-bottom:34px}
+  h2{font-size:21px;margin:46px 0 16px;padding-left:12px;border-left:4px solid var(--accent)}
+  p{margin:12px 0}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:22px;margin:20px 0}
+  b,strong{color:#fff}
+  .tag{display:inline-block;font-size:12px;padding:2px 9px;border-radius:20px;border:1px solid var(--line);color:var(--muted);margin-left:6px;vertical-align:middle}
+  .sramtag{color:#a9c2ff;border-color:#33509c}
+  .dramtag{color:#ffc59a;border-color:#8a4a24}
+
+  /* pyramid */
+  .pyr{display:flex;flex-direction:column;gap:8px;align-items:center;margin:8px 0}
+  .layer{width:100%;border-radius:10px;padding:14px 18px;display:flex;justify-content:space-between;
+    align-items:center;gap:12px;color:#0c1220;font-weight:600;position:relative}
+  .layer .name{font-size:16px}
+  .layer .spec{font-size:12.5px;font-weight:500;opacity:.9;text-align:right;line-height:1.5}
+  .l-reg{width:46%;background:linear-gradient(90deg,#8fd4ff,#5aa9ff)}
+  .l-sh {width:60%;background:linear-gradient(90deg,#7fc4ff,#4f93f0)}
+  .l-l2 {width:76%;background:linear-gradient(90deg,#a7b6ff,#6d7ff0)}
+  .diebar{width:88%;text-align:center;color:var(--muted);font-size:12px;letter-spacing:2px;
+    border-top:1px dashed var(--line);border-bottom:1px dashed var(--line);padding:5px 0;margin:4px 0}
+  .l-hbm{width:88%;background:linear-gradient(90deg,#ffcf9a,#e8873f)}
+  .l-cpu{width:100%;background:linear-gradient(90deg,#f2b07a,#cf7738)}
+  .axis{color:var(--muted);font-size:13px;text-align:center;margin-top:10px}
+  .side{position:absolute;left:-30px;top:50%;transform:translateY(-50%);color:var(--muted);font-size:12px}
+
+  /* three dimensions cards */
+  .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+  .card{background:#131a29;border:1px solid var(--line);border-radius:12px;padding:16px}
+  .card h3{margin:0 0 8px;font-size:16px}
+  .card .q{color:var(--muted);font-size:13px;margin:0 0 10px}
+  .card ul{margin:0;padding-left:18px;font-size:14px}
+  .card li{margin:5px 0}
+
+  /* mapping */
+  .map{display:grid;grid-template-columns:1fr 40px 1fr;align-items:center;gap:10px;margin:10px 0}
+  .exec,.mem{border-radius:10px;padding:12px 14px;font-weight:600;color:#0c1220}
+  .e1{background:#8fd4ff}.e2{background:#7fc4ff}.e3{background:#a7b6ff}
+  .m1{background:#8fd4ff}.m2{background:#7fc4ff}.m3{background:#ffcf9a}
+  .arrow{text-align:center;color:var(--muted);font-size:20px}
+  .cap{font-size:12px;color:var(--muted);font-weight:400;display:block;margin-top:3px}
+
+  /* flash vs paged */
+  .duo{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .duo .card h3{color:var(--accent)}
+  .duo .card.p h3{color:var(--warm)}
+  .flow{font-family:monospace;font-size:13px;color:var(--ink);background:#0d1320;border-radius:8px;padding:10px;margin-top:8px;line-height:1.8}
+
+  /* bars */
+  .bar{display:flex;align-items:center;gap:10px;margin:9px 0}
+  .bar .lab{width:110px;flex:none;font-size:12.5px;color:var(--muted)}
+  .bar .track{flex:1;min-width:40px;background:#0d1320;border-radius:6px;overflow:hidden;height:22px}
+  .bar .fill{height:100%;border-radius:6px}
+  .bar .val{width:190px;flex:none;font-size:12.5px;font-weight:600;color:var(--ink);text-align:right;line-height:1.35}
+
+  .takeaway{background:linear-gradient(90deg,#182034,#151d2e);border:1px solid var(--line)}
+  .takeaway li{margin:8px 0}
+  @media(max-width:680px){.grid3,.duo{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>越靠近算核，越快、越小、越贵</h1>
+  <div class="sub">一张 GPU 卡里的内存金字塔 · register / shared / L1 / L2 / HBM / CPU RAM</div>
+  <div class="meta">概念图解 · 2026-08-13 · 量级取 A100/H100 公开白皮书近似 · 由 Markdown 笔记图示化</div>
+
+  <p>读推理或训练的系统论文，几乎每篇都在跟“内存”较劲：FlashAttention 要减少 HBM 读写，PagedAttention 说 HBM 被留白浪费，量化要把权重塞得更小。但这些名字谁快谁慢、谁在哪、谁归谁管，很容易糊成一团。理清它们只靠<strong>一条物理规律</strong>：</p>
+  <div class="panel" style="text-align:center;font-size:18px;color:#fff">
+    存储离计算单元越近 → 越快、越小、越贵；越远 → 越慢、越大、越便宜
+  </div>
+
+  <h2>① 一座金字塔：谁在哪层</h2>
+  <div class="panel">
+    <div class="pyr">
+      <div class="layer l-reg"><span class="name">register 寄存器</span><span class="spec">线程私有<br>延迟 ~1 cycle · 容量 ~256 KB/SM</span></div>
+      <div class="layer l-sh"><span class="name">shared memory / L1</span><span class="spec">块内共享（同一 SM）<br>延迟 ~20-30 cycle · 容量 ~100-200 KB/SM</span></div>
+      <div class="layer l-l2"><span class="name">L2 cache</span><span class="spec">全芯片共享<br>延迟 ~200 cycle · 容量 ~40-50 MB</span></div>
+      <div class="diebar">──────── 芯片 (die) 边界 ────────</div>
+      <div class="layer l-hbm"><span class="name">HBM（＝显存）</span><span class="spec">全卡可见<br>延迟 ~300-600 cycle · 容量 40 / 80 GB</span></div>
+      <div class="layer l-cpu"><span class="name">CPU RAM（host）</span><span class="spec">主机内存（经 PCIe/NVLink）<br>延迟 ~数千 cycle · 容量 100 GB - 1 TB</span></div>
+    </div>
+    <div class="axis">↑ 片上 SRAM（蓝）　｜　片外 DRAM（橙）↓　—　越往下：越慢、越大、越便宜、越远离算核</div>
+    <div style="margin-top:14px;background:#0d1320;border:1px solid var(--line);border-radius:10px;padding:14px;font-size:13px;line-height:1.9;color:var(--muted)">
+      <b style="color:#fff">四个量分清楚(别混):</b><br>
+      · <b style="color:#fff">可见范围</b> = 谁能访问这块存储(线程私有 / 块内共享 / 全卡共享)<br>
+      · <b style="color:#fff">延迟 latency</b> = 发出一次读请求,到第一个数据到手,要<b>等多久</b>;单位 <b>cycle(时钟周期)</b>。<br>
+      · <b style="color:#fff">带宽 bandwidth</b> = 数据一旦开始流,<b>每秒能搬多少字节</b>;单位 <b>TB/s、GB/s</b>。衡量"搬运量",不是"等待时间"。<br>
+      · <b style="color:#fff">容量 capacity</b> = 能存多少字节,单位 <b>KB / MB / GB</b>。<br>
+      <div style="margin-top:10px;padding:10px;background:#141c2e;border-radius:8px">
+        <b style="color:#ffb454">延迟 ≠ 速度/带宽</b>,这是两个独立的量,不能互相换算。<br>
+        打比方:<b style="color:#fff">延迟</b>像"从下单到第一件货到手的等待时间";<b style="color:#fff">带宽</b>像"货运管道每秒能吞吐多少货"。一条通道可以既<b>高延迟</b>(离得远、等很久)又<b>高带宽</b>(一旦通了车流巨大)。HBM 就是典型:发一次请求要等几百 cycle(延迟高),但流起来每秒能搬 2-3 TB(带宽高)。
+      </div>
+      <div style="margin-top:8px;padding:10px;background:#141c2e;border-radius:8px">
+        <b style="color:#5aa9ff">什么是 per-cycle latency(单周期延迟)?</b><br>
+        <b style="color:#fff">1 cycle(时钟周期)</b> = GPU 时钟跳一下的时间。GPU 主频约 1-2 GHz,所以 <b>1 cycle ≈ 0.5-1 ns</b>。<br>
+        · register "延迟 ~1 cycle" = 发出读请求后约 1 拍就拿到数据,<b>几乎零等待</b>、与运算同步。<br>
+        · HBM "延迟 ~几百 cycle" = 发请求后要<b>干等几百拍</b>数据才回来 —— 这正是 GPU 要靠不停切换 warp 来"填补这段等待"的原因。
+      </div>
+      <div style="margin-top:12px;padding-top:12px;border-top:1px dashed var(--line)">
+        <b style="color:#fff">数量级直觉（先感受差多少倍，后面全靠它）</b>
+        <p style="margin:8px 0 4px;color:var(--muted);font-size:13px">带宽（越长越快，括号内是相对 CPU RAM 快多少倍）：</p>
+        <div class="bar"><span class="lab">register / SRAM</span><div class="track"><div class="fill" style="width:100%;background:#8fd4ff"></div></div><span class="val">&gt; 10 TB/s（片上）<br><b style="color:#8fd4ff">≈100-1000×</b></span></div>
+        <div class="bar"><span class="lab">HBM 显存</span><div class="track"><div class="fill" style="width:28%;background:#ffcf9a"></div></div><span class="val">2 - 3 TB/s<br><b style="color:#ffcf9a">≈20-300×</b></span></div>
+        <div class="bar"><span class="lab">CPU RAM</span><div class="track"><div class="fill" style="width:4%;background:#f2b07a"></div></div><span class="val">10 - 100 GB/s<br><b style="color:#f2b07a">1×（基准）</b></span></div>
+        <p style="color:var(--muted);font-size:13px;margin-top:14px">延迟（越短越好，括号内是相对 register 慢多少倍）：</p>
+        <div class="bar"><span class="lab">register</span><div class="track"><div class="fill" style="width:2%;background:#8fd4ff"></div></div><span class="val">~1 cycle<br><b style="color:#8fd4ff">1×（基准）</b></span></div>
+        <div class="bar"><span class="lab">L2 cache</span><div class="track"><div class="fill" style="width:12%;background:#9fd0ff"></div></div><span class="val">~200 cycle<br><b style="color:#9fd0ff">≈200× 慢</b></span></div>
+        <div class="bar"><span class="lab">HBM 显存</span><div class="track"><div class="fill" style="width:35%;background:#ffcf9a"></div></div><span class="val">~300-600 cycle<br><b style="color:#ffcf9a">≈300-600× 慢</b></span></div>
+        <div class="bar"><span class="lab">CPU RAM</span><div class="track"><div class="fill" style="width:100%;background:#f2b07a"></div></div><span class="val">~数千 cycle<br><b style="color:#f2b07a">≈1000× 以上慢</b></span></div>
+        <p style="color:var(--muted);font-size:13px;margin-top:14px">容量（越长越大，括号内是相对片上 SRAM 大多少倍）：</p>
+        <div class="bar"><span class="lab">片上 SRAM 合计</span><div class="track"><div class="fill" style="width:3%;background:#8fd4ff"></div></div><span class="val">~ 40 MB<br><b style="color:#8fd4ff">1×（基准）</b></span></div>
+        <div class="bar"><span class="lab">HBM 显存</span><div class="track"><div class="fill" style="width:35%;background:#ffcf9a"></div></div><span class="val">40 / 80 GB<br><b style="color:#ffcf9a">≈1000-2000× 大</b></span></div>
+        <div class="bar"><span class="lab">CPU RAM</span><div class="track"><div class="fill" style="width:100%;background:#f2b07a"></div></div><span class="val">100 GB - 1 TB<br><b style="color:#f2b07a">≈2500-25000× 大</b></span></div>
+        <div style="margin-top:14px;padding:10px 12px;background:#141c2e;border-radius:8px;color:var(--muted);font-size:13px;line-height:1.8">
+          <b style="color:#fff">一句话记住这条反向张力：</b><br>
+          片上寄存器/SRAM 比片外 HBM <b style="color:#8fd4ff">大约延迟低200倍、带宽高5倍</b>，<b style="color:#ffcf9a">但容量小约 1000 倍</b>；<br>
+          再看CPU RAM，<b style="color:#f2b07a">延迟高约1000倍</b>，<b style="color:#f2b07a">容量却大上万倍</b>。<br>
+          → <b style="color:#fff">越快的越小、越大的越慢</b>，两条曲线几乎精确反向——所有内存优化都在这条张力上做取舍。
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <h2>② 为什么会分这么多层：材料决定快慢大小</h2>
+  <p>SRAM、DRAM、HBM 常被并排念出来，好像是三种同级的东西。其实它们回答的是<strong>三个不同的问题</strong>——一块存储可以同时有三个标签。上一节的“快慢大小”，根子就在这里的<strong>电路材料</strong>。</p>
+  <div class="panel">
+    <div class="grid3">
+      <div class="card">
+        <h3>电路怎么做的？<span class="tag sramtag">SRAM</span><span class="tag dramtag">DRAM</span></h3>
+        <p class="q">看用什么记住一个比特</p>
+        <ul>
+          <li><b>SRAM</b>：触发器，通电即记，快、贵、占面积</li>
+          <li><b>DRAM</b>：电容存电荷，需定时刷新，慢、便宜、密</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>装在哪里？<span class="tag">片上 / 片外</span></h3>
+        <p class="q">看在不在 GPU 硅晶片 (die) 上</p>
+        <ul>
+          <li><b>片上</b>：register / shared / L1 / L2，都是 SRAM</li>
+          <li><b>片外</b>：HBM、CPU RAM，都是 DRAM</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>怎么封装的？<span class="tag dramtag">HBM</span></h3>
+        <p class="q">看 DRAM 用什么形态接上来</p>
+        <ul>
+          <li><b>HBM</b>＝3D 堆叠、贴着 GPU 的高带宽 DRAM</li>
+          <li>所以「显存」＝HBM＝一种封装讲究的 DRAM</li>
+        </ul>
+      </div>
+    </div>
+    <div style="margin-top:16px;background:#0d1320;border:1px solid var(--line);border-radius:10px;padding:16px;font-size:13px;line-height:1.85;color:var(--muted)">
+      <b style="color:#fff;font-size:14px">深入一层：SRAM 和 DRAM 到底长什么样、差在哪？</b>
+      <p style="margin:8px 0 4px">两者都用来存 0/1，区别在于<b style="color:#fff">用什么电路记住这一个比特</b>：</p>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:12px 0">
+        <div style="background:#101a2c;border:1px solid var(--line);border-radius:8px;padding:12px">
+          <b style="color:#8fd4ff">SRAM（静态）— 1 bit 用约 6 个晶体管</b>
+          <div style="display:flex;flex-direction:column;align-items:center;gap:6px;margin:12px 0;font-size:12px;color:#bcd">
+            <div style="color:#7e8aa0">Vdd（电源）</div>
+            <div style="width:2px;height:10px;background:#3a4560"></div>
+            <div style="display:flex;align-items:center;gap:8px">
+              <div style="border:1px solid #8fd4ff;border-radius:6px;padding:8px 12px;background:#12233a;text-align:center;line-height:1.3">反相器<br>A</div>
+              <div style="display:flex;flex-direction:column;align-items:center;color:#8fd4ff;font-size:14px">◀──▶<span style="font-size:10px;color:#7e8aa0">互锁</span></div>
+              <div style="border:1px solid #8fd4ff;border-radius:6px;padding:8px 12px;background:#12233a;text-align:center;line-height:1.3">反相器<br>B</div>
+            </div>
+            <div style="display:flex;gap:70px"><div style="width:2px;height:10px;background:#3a4560"></div><div style="width:2px;height:10px;background:#3a4560"></div></div>
+            <div style="color:#7e8aa0">读 / 写 线</div>
+          </div>
+          <ul style="margin:6px 0;padding-left:18px">
+            <li>两个反相器首尾相接，形成<b style="color:#fff">自锁</b>：只要通着电，状态就一直稳住</li>
+            <li><b style="color:#fff">不用刷新</b>（Static＝静态，指状态自己保持）</li>
+            <li>快、但一个比特占约 6 个晶体管 → <b style="color:#fff">占面积、贵、密度低</b> → 只能做小容量（register/L1/L2）</li>
+          </ul>
+        </div>
+        <div style="background:#1c1810;border:1px solid var(--line);border-radius:8px;padding:12px">
+          <b style="color:#ffcf9a">DRAM（动态）— 1 bit 用 1 电容 + 1 晶体管</b>
+          <div style="display:flex;flex-direction:column;align-items:center;gap:5px;margin:12px 0;font-size:12px;color:#dcb">
+            <div style="color:#7e8aa0">字线（开关控制）</div>
+            <div style="width:2px;height:10px;background:#5a4a30"></div>
+            <div style="border:1px solid #ffcf9a;border-radius:6px;padding:5px 14px;background:#2a2110">晶体管（开关）</div>
+            <div style="width:2px;height:10px;background:#5a4a30"></div>
+            <div style="border:1px solid #ffcf9a;border-radius:6px;padding:5px 14px;background:#2a2110;text-align:center;line-height:1.3">电容<br><span style="font-size:10px;color:#c9a86a">有电荷=1 · 没电荷=0</span></div>
+            <div style="width:2px;height:10px;background:#5a4a30"></div>
+            <div style="color:#7e8aa0">位线（读 / 写）</div>
+          </div>
+          <ul style="margin:6px 0;padding-left:18px">
+            <li>靠一个小电容<b style="color:#fff">存不存电荷</b>来表示 1 或 0</li>
+            <li>电容会<b style="color:#fff">慢慢漏电</b>，几十毫秒就漏光 → 必须每隔几毫秒把每一位读出来再写回去，这就是<b style="color:#fff">刷新(refresh)</b>；Dynamic＝动态，正指这个不断刷新的过程</li>
+            <li>一个比特只占 1 电容+1 管 → <b style="color:#fff">又小又便宜、密度极高</b> → 能做大容量（HBM、CPU RAM 几十~几百 GB）</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+    <p style="margin-top:14px;color:var(--muted);font-size:14px">一句话：<b>SRAM/DRAM</b> 说电路，<b>片上/片外</b> 说位置，<b>HBM</b> 说封装。HBM 不与 SRAM 并列，它本质仍是 DRAM。</p>
+  </div>
+    <div style="background:#141c2e;border:1px solid var(--line);border-radius:10px;padding:12px 14px;font-size:14px;color:var(--muted)">
+      <b style="color:#fff">RAM 和 memory 的差别</b>：<b>memory（内存/存储）</b>是统称，register、shared memory、L1/L2、HBM、CPU RAM 都属于 memory；<b>RAM（Random Access Memory，随机存取存储器）</b>是 memory 的一个子集，广义上指“可按地址随机访问”的易失性存储器，SRAM 和 DRAM 都属于 RAM；换句话说，<b>RAM ⊂ memory</b>。但口语/产品语境里说“内存/RAM”时，通常特指 CPU 主存（DRAM）。GPU 的 register、shared memory、L2、HBM 也都是 memory，只是不一定叫 RAM。为避免混淆，本文里统一把 block 内共享的 SRAM 叫作 <b>shared memory</b>。
+    </div>
+
+
+  <h2>③ L1、L2、shared 到底是什么</h2>
+  <p>前面按“电路材料”把存储分成了 SRAM 和 DRAM。但你在文档里更常看到的是 <b>L1 / L2 / shared memory</b> 这些名字——它们不是第三种电路，而是<b>同一种 SRAM 按“离算核远近 / 共享范围”排成的缓存层级</b>。</p>
+  <div class="card">
+    <div style="padding:10px;background:#141c2e;border-radius:8px;margin-bottom:6px">
+      · <b style="color:#fff">L1</b>（一级缓存）＝每个 SM 私有、离计算单元最近的一小块 SRAM，最快、最小（和 shared memory 是同一块物理 SRAM 的两种用法）。<br>
+      · <b style="color:#fff">L2</b>（二级缓存）＝全芯片所有 SM 共享的一块较大 SRAM，比 L1 慢些、大些，是访问片外 HBM 前的最后一道片上缓冲。<br>
+      · <b style="color:#fff">shared memory</b>＝程序员能手动管理的那块 L1 SRAM，一个 block 内的线程共用。
+    </div>
+    <p style="margin:6px 0 0;color:var(--muted);font-size:14px">“L1 比 L2 快” 是因为它更小、更近；缓存的通用规律就是<b style="color:#fff">越近越快越小</b>。另：GPU 一般<b>没有独立 L3</b>（那是 CPU 的层级），到 L2 就直连 HBM。</p>
+  </div>
+
+  <h2>④ 执行层次 ↔ 内存层次：先分清“软件逻辑层”和“硬件物理层”</h2>
+  <p>先分清两个架构：<b>CUDA 的 grid / block / warp / thread 是软件逻辑层</b>；<b>SM、寄存器堆、shared memory / L1、执行单元是硬件物理层</b>。两者通过“调度 + 资源分配”映射，不是“硬件盒子套盒子”的物理包含关系。下面这张图说的是“逻辑执行单位的存储可见范围”，不是“block 是 SM 里焊死的一个子部件”。</p>
+    <p>存储的“可见范围”不是随便定的，而是由<strong>谁在执行</strong>决定的。CUDA 的逻辑执行单位与内存层次严格对应：</p>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:14px 0">
+      <div style="background:#0d1320;border:1px solid #33509c;border-radius:10px;padding:14px">
+        <b style="color:#8fd4ff">软件逻辑层（执行模型）</b><br>
+        grid → block → warp → thread<br>
+        <span style="color:var(--muted);font-size:13px">这些是“任务 / 执行上下文”，不是芯片上的独立零件。</span>
+      </div>
+      <div style="background:#0d1320;border:1px solid #8a4a24;border-radius:10px;padding:14px">
+        <b style="color:#ffcf9a">硬件物理层（执行资源）</b><br>
+        GPU → SM → 寄存器堆 / shared memory / Tensor Core / 执行单元<br>
+        <span style="color:var(--muted);font-size:13px">这些是真正焊在芯片上的物理资源。</span>
+      </div>
+    </div>
+    <div style="background:#141c2e;border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:14px;font-size:14px;color:var(--muted)">
+      <b style="color:#fff">映射不是包含</b>：block 不是 SM 的固定子部件；它是被调度到 SM 上执行的任务。block 的 shared memory 来自该 SM 的物理 shared memory 配额，block 结束后归还。warp 是 SM 的指令调度粒度，thread 是逻辑执行上下文。
+    </div>
+
+  <div class="panel">
+    <div class="map">
+      <div class="exec e1">thread 线程<span class="cap">逻辑执行上下文；真正物理的是 SM 里的执行单元</span></div>
+      <div class="arrow">↔</div>
+      <div class="mem m1">register 寄存器<span class="cap">一堆固定数量的小格子；每个线程占用几个是可变的</span></div>
+    </div>
+    <div class="map">
+      <div class="exec e1" style="background:#a9def0">warp 线程束<span class="cap">32 个逻辑 thread 绑成一组、锁步执行同一指令（SIMT）；硬件指令调度粒度</span></div>
+      <div class="arrow">↔</div>
+      <div class="mem m1" style="background:#a9def0">register（整组 32 份）<span class="cap">这 32 个线程各自的格子必须同时就位，SM 才放这组进来</span></div>
+    </div>
+    <div class="map">
+      <div class="exec e2">block 线程块<span class="cap">逻辑协作组；被调度后驻留在同一个 SM 上，不是 SM 的物理子部件</span></div>
+      <div class="arrow">↔</div>
+      <div class="mem m2">shared memory / L1<span class="cap">块内共享，出了块即失效</span></div>
+    </div>
+    <div class="map">
+      <div class="exec e3">GPU 全局（所有 SM 上的线程/block）<span class="cap">L2/HBM 的可见范围是整个 GPU，不属于某个 SM 或 block</span></div>
+      <div class="arrow">↔</div>
+      <div class="mem m3">L2 / HBM<span class="cap">全卡可见，谁都能读</span></div>
+    </div>
+    <div style="margin-top:14px;background:#0d1320;border:1px solid var(--line);border-radius:10px;padding:16px">
+      <p style="margin:0 0 10px;color:#fff;font-size:15px"><b>occupancy 就是一道除法题</b></p>
+      <p style="margin:0 0 12px;color:var(--muted);font-size:14px">寄存器格子<b style="color:#fff">总数是固定的</b>（硬件焊死，如 A100 每 SM 有 65536 个）；一个线程<b style="color:#fff">占几个格子是可变的</b>（代码越复杂占越多）。两者一除，决定能同时跑多少线程：</p>
+      <div style="font-family:monospace;font-size:14px;color:var(--ink);line-height:2">
+        每线程用 <b style="color:#5ad19b">32</b> 个 → 65536 / 32 = <b style="color:#5ad19b">2048</b> 线程同时住下 <span style="color:#5ad19b">（车间满，快）</span><br>
+        每线程用 <b style="color:#ff7eb6">128</b> 个 → 65536 / 128 = <b style="color:#ff7eb6">512</b> 线程 <span style="color:#ff7eb6">（车间空大半，慢）</span>
+      </div>
+      <p style="margin:12px 0 0;color:var(--muted);font-size:13px">线程占得越多 → 分母越大 → 同时驻留的 warp 越少 → GPU 靠“切换 warp”隐藏延迟的本钱变少。这就是“省着用寄存器”能提速的原因；用超了则<b>寄存器溢出</b>到片外，断崖式变慢。</p>
+    </div>
+  </div>
+
+  <h2>⑤ 回到锚点：FlashAttention vs PagedAttention</h2>
+  <p>两者都在跟内存较劲，但优化的<strong>不是同一层、不是同一件事</strong>，因此可以叠加使用。</p>
+  <div class="panel">
+    <div class="duo">
+      <div class="card">
+        <h3>FlashAttention · 省带宽</h3>
+        <p class="q">战场在 HBM ↔ SRAM 的搬运（跨层）</p>
+        <div class="flow">HBM ──搬一块──▶ SRAM<br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;算完再搬下一块<br>◀── 少读少写 ──</div>
+        <p style="font-size:13px;color:var(--muted);margin-top:8px">不落地中间大矩阵，减少 HBM 往返次数。</p>
+      </div>
+      <div class="card p">
+        <h3>PagedAttention · 省容量</h3>
+        <p class="q">战场在 HBM 内部的排布（层内）</p>
+        <div class="flow">HBM: [页][页][页]…<br>&nbsp;&nbsp;像内存分页，按需分配<br>&nbsp;&nbsp;不给每个序列预留一大段</div>
+        <p style="font-size:13px;color:var(--muted);margin-top:8px">消除 KV Cache 的内部留白，装下更多并发序列。</p>
+      </div>
+    </div>
+    <p style="margin-top:14px;color:var(--muted);font-size:14px">读任何内存优化论文，先问两句：<b>它在搬哪两层数据（省带宽）？还是在省哪一层的占用（省容量）？</b></p>
+  </div>
+
+  <h2>我能带走什么</h2>
+  <div class="panel takeaway">
+    <ul>
+      <li>用<b>一条轴</b>统一所有名词：离算核的物理距离 → 决定快慢、大小、贵贱。</li>
+      <li><b>三套标签别混</b>：SRAM/DRAM（电路）、片上/片外（位置）、HBM（封装）；HBM 本质是片外 DRAM。</li>
+      <li>分清<b>软件逻辑层</b>（grid/block/warp/thread）与<b>硬件物理层</b>（SM/寄存器堆/shared memory/执行单元）；存储的可见范围由逻辑执行单位决定，但物理资源都在硬件层：thread 的上下文存在寄存器堆、block 被调度到 SM 后分到物理 shared memory 配额、全卡共享 L2/HBM。</li>
+      <li>看优化论文先分类：<b>省带宽（跨层搬运，如 FlashAttention）</b> 还是 <b>省容量（层内排布，如 PagedAttention）</b>。</li>
+    </ul>
+  </div>
+
+</div>
+</body>
+</html>
