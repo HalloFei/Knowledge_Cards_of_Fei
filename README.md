@@ -10,8 +10,7 @@
 | `notes/` | 论文精读笔记（`__paper`）与概念长文（`__concept`） | ✅ |
 | `Terms/` | 术语卡片库，按 Concept / Method / Tool 三类归档 | ✅ |
 | `Papers/` | 论文 PDF 原文与少量附件，体积大，本地留存 | ❌ 默认忽略 |
-| `.paper-cache/` | 论文正文抽取缓存（可重建） | ❌ |
-| `.joycode/` | 本地 Agent 的记忆、规则与 skill | ❌ |
+
 
 ## 笔记约定
 
@@ -45,18 +44,3 @@ Terms/{Concept,Method,Tool}/<Term>.md
 
 卡片内容：JSON 头（`term` / `full_form` / `folder` / `definition` / `tags` / `storage_path`）+ 📖 详细定义 / 🔬 前沿研究 / 🔗 相关概念 / ⚖️ 优缺点。
 
-## 文件策略
-
-- **只把文本入库**：Markdown 笔记与术语卡片进 Git，PDF 原文与二进制文件留在本地。
-- 原因：GitHub 单文件上限 100MB，而 `Papers/` 下的 PDF 合计约 280MB，另有一个 437MB 的 `.whl`；一旦进入历史便很难清除。
-- 确需纳入某篇 PDF 时，用 `git add -f "Papers/xxx.pdf"` 单独放行。
-
-## 日常流程
-
-```bash
-# 1. 读论文 → notes/ 落笔记
-# 2. 沉淀术语 → Terms/<分类>/ 建卡片
-git add -A
-git commit -m "notes: add <paper-slug>"
-git push
-```
