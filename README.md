@@ -7,7 +7,7 @@
 
 | 目录 | 内容 | 是否入库 |
 | --- | --- | --- |
-| `notes/` | 论文精读笔记（`__paper`）与概念长文（`__concept`） | ✅ |
+| `Notes/` | 论文精读笔记（`__paper`）与概念长文（`__concept`） | ✅ |
 | `Terms/` | 术语卡片库，按 Concept / Method / Tool 三类归档 | ✅ |
 | `Papers/` | 论文 PDF 原文与少量附件，体积大，本地留存 | ❌ 默认忽略 |
 
@@ -17,7 +17,7 @@
 文件名沿用时间戳前缀，便于按时间排序：
 
 ```
-notes/YYYYMMDDTHHMMSS--<slug>__<type>.md
+Notes/YYYYMMDDTHHMMSS--<slug>__<type>.md
 # type: paper | concept
 ```
 
@@ -56,7 +56,7 @@ Terms/{Concept,Method,Tool}/<Term>.md
 
 ## 致谢
 
-`notes/` 的读法与写法来自 **ljg-paper** —— 一个面向非专业读者的 paper reading skill。它不满足于「知道论文说了什么」，而是要求先找出自己缺的承重概念，再让这些概念按依赖关系接成一个能解释原问题、能区分邻近情况、能被证据约束的模型；本仓库笔记的命名、四段结构与「不把承重概念压缩掉」的取舍，都沿用它。
+`Notes/` 的读法与写法来自 **ljg-paper** —— 一个面向非专业读者的 paper reading skill。它不满足于「知道论文说了什么」，而是要求先找出自己缺的承重概念，再让这些概念按依赖关系接成一个能解释原问题、能区分邻近情况、能被证据约束的模型；本仓库笔记的命名、四段结构与「不把承重概念压缩掉」的取舍，都沿用它。
 
 感谢 ljg 公开分享这份 skill。
 
