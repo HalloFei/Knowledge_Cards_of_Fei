@@ -45,6 +45,16 @@ Terms/{Concept,Method,Tool}/<Term>.md
 
 卡片内容：JSON 头（`term` / `full_form` / `folder` / `definition` / `tags` / `storage_path`）+ 📖 详细定义 / 🔬 前沿研究 / 🔗 相关概念 / ⚖️ 优缺点。
 
+## 术语卡片生成 Agent
+
+`Terms/` 下的卡片由同一份 agent 设定生成，随仓库版本化，换台机器也能复现同样的产出：
+
+- [`.joycode/modes/rules-ep69s-oo/agentDefinition.md`](.joycode/modes/rules-ep69s-oo/agentDefinition.md) —— 术语学习与归档助手：输出 JSON 卡片 + 精简 Markdown，并直接落盘
+- [`Terms/.joycode/modes/rules-ep69s-oo/agentDefinition.md`](Terms/.joycode/modes/rules-ep69s-oo/agentDefinition.md) —— 在 `Terms/` 工作区下使用的同内容副本
+- [`Terms/.joycode/memory/feedback_term_teacher.md`](Terms/.joycode/memory/feedback_term_teacher.md) —— 反馈约束：卡片写进 `Terms/<分类>/`，而不是只在回复里输出
+
+其余 `.joycode` 内容（memory、skills、其它 mode）属于本地运行态，由 `.gitignore` 忽略。
+
 ## 致谢
 
 `notes/` 的读法与写法来自 **ljg-paper** —— 一个面向非专业读者的 paper reading skill。它不满足于「知道论文说了什么」，而是要求先找出自己缺的承重概念，再让这些概念按依赖关系接成一个能解释原问题、能区分邻近情况、能被证据约束的模型；本仓库笔记的命名、四段结构与「不把承重概念压缩掉」的取舍，都沿用它。

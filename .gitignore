@@ -2,7 +2,14 @@
 .paper-cache/
 
 # ---- 本地 Agent 配置与记忆 ----
-.joycode/
+# 默认不入库；只保留「术语卡片生成」这一个 agent 的设定（见 README）
+/.joycode/memory/
+/.joycode/skills/
+/.joycode/modes/*
+!/.joycode/modes/rules-ep69s-oo/
+/Terms/.joycode/skills/
+/Terms/.joycode/modes/*
+!/Terms/.joycode/modes/rules-ep69s-oo/
 
 # ---- 论文原文与大型二进制：默认不入库 ----
 # GitHub 单文件上限 100MB；本仓库 Papers/ 下 PDF 合计约 280MB
