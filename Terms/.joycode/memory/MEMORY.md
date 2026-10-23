@@ -1,1 +1,0 @@
-- [feedback_term_teacher](feedback_term_teacher.md) — Term Teacher Agent should create files directly in /Terms directory

@@ -49,11 +49,10 @@ Terms/{Concept,Method,Tool}/<Term>.md
 
 `Terms/` 下的卡片由同一份 agent 设定生成，随仓库版本化，换台机器也能复现同样的产出：
 
-- [`.joycode/modes/rules-ep69s-oo/agentDefinition.md`](.joycode/modes/rules-ep69s-oo/agentDefinition.md) —— 术语学习与归档助手：输出 JSON 卡片 + 精简 Markdown，并直接落盘
-- [`Terms/.joycode/modes/rules-ep69s-oo/agentDefinition.md`](Terms/.joycode/modes/rules-ep69s-oo/agentDefinition.md) —— 在 `Terms/` 工作区下使用的同内容副本
-- [`Terms/.joycode/memory/feedback_term_teacher.md`](Terms/.joycode/memory/feedback_term_teacher.md) —— 反馈约束：卡片写进 `Terms/<分类>/`，而不是只在回复里输出
+- [`.agents/term-card-generation.md`](.agents/term-card-generation.md) —— 术语卡片生成：输入术语，输出 JSON 卡片 + 精简 Markdown，并直接写入 `Terms/<分类>/`
+- [`.agents/term-card-generation-feedback.md`](.agents/term-card-generation-feedback.md) —— 反馈约束：卡片要落盘成文件，而不是只在回复里输出
 
-其余 `.joycode` 内容（memory、skills、其它 mode）属于本地运行态，由 `.gitignore` 忽略。
+`.joycode/` 只是本地工具的运行时目录，由 `.gitignore` 忽略。
 
 ## 致谢
 
