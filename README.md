@@ -21,6 +21,8 @@ notes/YYYYMMDDTHHMMSS--<slug>__<type>.md
 # type: paper | concept
 ```
 
+笔记按 **ljg-paper** skill 的流程产出：先承认自己缺哪些概念，再把这些概念接成能解释现象、能被证据约束的模型，而不是把论文压缩成一份摘要（见文末[致谢](#致谢)）。
+
 每篇笔记的结构：
 
 1. **一句话主标题** —— 用一句人话概括这篇论文真正解决了什么
@@ -43,4 +45,10 @@ Terms/{Concept,Method,Tool}/<Term>.md
 分类边界与判例见 [Terms/README.md](Terms/README.md)。
 
 卡片内容：JSON 头（`term` / `full_form` / `folder` / `definition` / `tags` / `storage_path`）+ 📖 详细定义 / 🔬 前沿研究 / 🔗 相关概念 / ⚖️ 优缺点。
+
+## 致谢
+
+`notes/` 的读法与写法来自 **ljg-paper** —— 一个面向非专业读者的 paper reading skill。它不满足于「知道论文说了什么」，而是要求先找出自己缺的承重概念，再让这些概念按依赖关系接成一个能解释原问题、能区分邻近情况、能被证据约束的模型；本仓库笔记的命名、四段结构与「不把承重概念压缩掉」的取舍，都沿用它。
+
+感谢 ljg 公开分享这份 skill。
 
