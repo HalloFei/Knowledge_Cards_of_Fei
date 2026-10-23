@@ -70,7 +70,5 @@ Terms/{Concept,Method,Tool}/<Term>.md
 - **代码与 agent 设定**（`.agents/`、配置与脚本）—— [MIT](LICENSE)：可自由使用、修改、分发，保留版权声明即可。
 - **文字内容**（`Notes/`、`Terms/` 下的笔记与术语卡片）—— [CC BY 4.0](LICENSE-CC-BY-4.0.txt)：可共享、改编（含商业用途），但须署名、注明是否修改，且不得暗示作者为你的使用背书。
 
-转载或引用时，请注明作者 **HalloFei**，并链接到 <https://github.com/HalloFei/Knowledge_Cards_of_Fei>。
-
 Copyright © 2026 HalloFei
 
