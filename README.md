@@ -1,0 +1,62 @@
+# 知识卡片 · Knowledge Cards of Fei
+
+个人文献精读与术语沉淀仓库：读过的论文落成长文笔记，遇到的术语整理成卡片。
+内容以中文书写，术语与论文原名保留英文。
+
+## 目录结构
+
+| 目录 | 内容 | 是否入库 |
+| --- | --- | --- |
+| `notes/` | 论文精读笔记（`__paper`）与概念长文（`__concept`） | ✅ |
+| `Terms/` | 术语卡片库，按 Concept / Method / Tool 三类归档 | ✅ |
+| `Papers/` | 论文 PDF 原文与少量附件，体积大，本地留存 | ❌ 默认忽略 |
+| `.paper-cache/` | 论文正文抽取缓存（可重建） | ❌ |
+| `.joycode/` | 本地 Agent 的记忆、规则与 skill | ❌ |
+
+## 笔记约定
+
+文件名沿用时间戳前缀，便于按时间排序：
+
+```
+notes/YYYYMMDDTHHMMSS--<slug>__<type>.md
+# type: paper | concept
+```
+
+每篇笔记的结构：
+
+1. **一句话主标题** —— 用一句人话概括这篇论文真正解决了什么
+2. **副标题 / 日期 / 来源 / 作者 / 发表场所** 元信息
+3. **速读** —— 三五句可带走的结论
+4. **它到底在解决什么** —— 问题背景与既有方案的失灵之处
+5. **它真正看见了什么** —— 核心洞察，而不是方法罗列
+6. 关键机制、实验证据、局限与适用边界
+
+## 术语卡片约定
+
+```
+Terms/{Concept,Method,Tool}/<Term>.md
+```
+
+- **Concept**：抽象概念、范式、理论构造、任务定义，不含具体实现
+- **Method**：可实现的算法、学习算法、模型架构
+- **Tool**：软件库、框架、SDK、语言或平台
+
+分类边界与判例见 [Terms/README.md](Terms/README.md)。
+
+卡片内容：JSON 头（`term` / `full_form` / `folder` / `definition` / `tags` / `storage_path`）+ 📖 详细定义 / 🔬 前沿研究 / 🔗 相关概念 / ⚖️ 优缺点。
+
+## 文件策略
+
+- **只把文本入库**：Markdown 笔记与术语卡片进 Git，PDF 原文与二进制文件留在本地。
+- 原因：GitHub 单文件上限 100MB，而 `Papers/` 下的 PDF 合计约 280MB，另有一个 437MB 的 `.whl`；一旦进入历史便很难清除。
+- 确需纳入某篇 PDF 时，用 `git add -f "Papers/xxx.pdf"` 单独放行。
+
+## 日常流程
+
+```bash
+# 1. 读论文 → notes/ 落笔记
+# 2. 沉淀术语 → Terms/<分类>/ 建卡片
+git add -A
+git commit -m "notes: add <paper-slug>"
+git push
+```
