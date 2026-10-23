@@ -3,6 +3,9 @@
 个人文献精读与术语沉淀仓库：读过的论文落成长文笔记，遇到的术语整理成卡片。
 内容以中文书写，术语与论文原名保留英文。
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![License: CC BY 4.0](https://img.shields.io/badge/License-CC_BY_4.0-lightgrey.svg)](LICENSE-CC-BY-4.0.txt)
+
 ## 目录结构
 
 | 目录 | 内容 | 是否入库 |
@@ -59,4 +62,15 @@ Terms/{Concept,Method,Tool}/<Term>.md
 `Notes/` 的读法与写法来自 **ljg-paper** —— 一个面向非专业读者的 paper reading skill。它不满足于「知道论文说了什么」，而是要求先找出自己缺的承重概念，再让这些概念按依赖关系接成一个能解释原问题、能区分邻近情况、能被证据约束的模型；本仓库笔记的命名、四段结构与「不把承重概念压缩掉」的取舍，都沿用它。
 
 感谢 ljg 公开分享这份 skill。
+
+## 许可证
+
+本仓库采用双许可：
+
+- **代码与 agent 设定**（`.agents/`、配置与脚本）—— [MIT](LICENSE)：可自由使用、修改、分发，保留版权声明即可。
+- **文字内容**（`Notes/`、`Terms/` 下的笔记与术语卡片）—— [CC BY 4.0](LICENSE-CC-BY-4.0.txt)：可共享、改编（含商业用途），但须署名、注明是否修改，且不得暗示作者为你的使用背书。
+
+转载或引用时，请注明作者 **HalloFei**，并链接到 <https://github.com/HalloFei/Knowledge_Cards_of_Fei>。
+
+Copyright © 2026 HalloFei
 
